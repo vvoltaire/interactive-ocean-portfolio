@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useMemo } from 'react'
+import { useRef, useMemo, useEffect } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 
@@ -11,32 +11,61 @@ interface SeaWaterProps {
 export function SeaWater({ position = [0, 0, 0] }: SeaWaterProps) {
   const meshRef = useRef<THREE.Mesh>(null)
   const materialRef = useRef<THREE.ShaderMaterial>(null)
-  const { camera } = useThree()
+  const { camera, gl, scene } = useThree()
+  
+  // Create reflection render target for planar reflections
+  const reflectionRenderTarget = useMemo(() => {
+    return new THREE.WebGLRenderTarget(1024, 1024, {
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+      format: THREE.RGBAFormat,
+      type: THREE.HalfFloatType,
+    })
+  }, [])
+  
+  // Reflection camera
+  const reflectionCamera = useMemo(() => {
+    return new THREE.PerspectiveCamera()
+  }, [])
+  
+  // Clip plane for reflection
+  const clipPlane = useMemo(() => new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), [])
 
   const uniforms = useMemo(
     () => ({
       uTime: { value: 0 },
       uCameraPosition: { value: new THREE.Vector3() },
-      uSunDirection: { value: new THREE.Vector3(0.3, 0.5, -0.4).normalize() },
-      // Ocean colors matching reference images
-      uDeepColor: { value: new THREE.Color('#0a2a3d') },
-      uShallowColor: { value: new THREE.Color('#1a5a7a') },
-      uFresnelColor: { value: new THREE.Color('#6aaed6') },
-      uSkyColorTop: { value: new THREE.Color('#4a8dc9') },
-      uSkyColorHorizon: { value: new THREE.Color('#b8d4e8') },
+      uSunDirection: { value: new THREE.Vector3(0.5, 0.6, -0.3).normalize() },
+      uReflectionTexture: { value: reflectionRenderTarget.texture },
+      uReflectionMatrix: { value: new THREE.Matrix4() },
+      // Ocean colors - richer, more varied
+      uDeepColor: { value: new THREE.Color('#0a3d5c') },
+      uMidColor: { value: new THREE.Color('#1a6b8a') },
+      uShallowColor: { value: new THREE.Color('#3498b8') },
+      uFresnelColor: { value: new THREE.Color('#7ec8e8') },
+      uSkyColorTop: { value: new THREE.Color('#5da4d4') },
+      uSkyColorHorizon: { value: new THREE.Color('#c8e4f4') },
+      uFoamColor: { value: new THREE.Color('#ffffff') },
+      // Wave parameters
+      uWaveStrength: { value: 1.0 },
+      uChoppiness: { value: 1.2 },
     }),
-    []
+    [reflectionRenderTarget.texture]
   )
 
   const vertexShader = `
     uniform float uTime;
+    uniform float uWaveStrength;
+    uniform float uChoppiness;
     
     varying vec2 vUv;
     varying vec3 vWorldPosition;
     varying vec3 vNormal;
     varying float vHeight;
+    varying vec4 vReflectionCoord;
+    varying float vFoam;
     
-    // Improved noise functions for realistic waves
+    // Simplex noise for detailed ripples
     vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
     vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
     vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
@@ -102,13 +131,25 @@ export function SeaWater({ position = [0, 0, 0] }: SeaWaterProps) {
       return 42.0 * dot(m*m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
     }
     
-    // Gerstner wave for more realistic ocean waves
-    vec3 gerstnerWave(vec2 position, float steepness, float wavelength, vec2 direction, float time) {
-      float k = 2.0 * 3.14159 / wavelength;
-      float c = sqrt(9.8 / k);
+    // Gerstner wave with full displacement
+    vec3 gerstnerWave(vec2 pos, float steepness, float wavelength, vec2 direction, float time, out vec3 tangent, out vec3 binormal) {
+      float k = 2.0 * 3.14159265 / wavelength;
+      float c = sqrt(9.81 / k);
       vec2 d = normalize(direction);
-      float f = k * (dot(d, position) - c * time);
+      float f = k * (dot(d, pos) - c * time);
       float a = steepness / k;
+      
+      tangent = vec3(
+        1.0 - d.x * d.x * steepness * sin(f),
+        d.x * steepness * cos(f),
+        -d.x * d.y * steepness * sin(f)
+      );
+      
+      binormal = vec3(
+        -d.x * d.y * steepness * sin(f),
+        d.y * steepness * cos(f),
+        1.0 - d.y * d.y * steepness * sin(f)
+      );
       
       return vec3(
         d.x * (a * cos(f)),
@@ -121,47 +162,85 @@ export function SeaWater({ position = [0, 0, 0] }: SeaWaterProps) {
       vUv = uv;
       vec3 pos = position;
       
-      // World position for wave calculation
-      vec2 worldXZ = (modelMatrix * vec4(position, 1.0)).xz;
+      vec4 worldPos = modelMatrix * vec4(position, 1.0);
+      vec2 worldXZ = worldPos.xz;
       
-      // Multiple Gerstner waves for realistic ocean
       vec3 wave = vec3(0.0);
+      vec3 tangent = vec3(1.0, 0.0, 0.0);
+      vec3 binormal = vec3(0.0, 0.0, 1.0);
+      vec3 t, b;
       
-      // Large swells
-      wave += gerstnerWave(worldXZ, 0.15, 30.0, vec2(1.0, 0.5), uTime * 0.4);
-      wave += gerstnerWave(worldXZ, 0.12, 20.0, vec2(0.7, 1.0), uTime * 0.5);
-      wave += gerstnerWave(worldXZ, 0.1, 15.0, vec2(-0.5, 0.8), uTime * 0.6);
+      float chop = uChoppiness;
+      float strength = uWaveStrength;
+      
+      // Ocean swells - multiple overlapping Gerstner waves
+      // Primary swell
+      wave += gerstnerWave(worldXZ, 0.20 * chop, 45.0, vec2(1.0, 0.6), uTime * 0.35, t, b) * strength;
+      tangent += t - vec3(1.0, 0.0, 0.0);
+      binormal += b - vec3(0.0, 0.0, 1.0);
+      
+      // Secondary swell
+      wave += gerstnerWave(worldXZ, 0.15 * chop, 32.0, vec2(0.8, 1.0), uTime * 0.42, t, b) * strength;
+      tangent += t - vec3(1.0, 0.0, 0.0);
+      binormal += b - vec3(0.0, 0.0, 1.0);
+      
+      // Cross swell
+      wave += gerstnerWave(worldXZ, 0.12 * chop, 25.0, vec2(-0.4, 0.9), uTime * 0.48, t, b) * strength;
+      tangent += t - vec3(1.0, 0.0, 0.0);
+      binormal += b - vec3(0.0, 0.0, 1.0);
       
       // Medium waves
-      wave += gerstnerWave(worldXZ, 0.08, 8.0, vec2(1.0, 0.3), uTime * 0.8);
-      wave += gerstnerWave(worldXZ, 0.06, 6.0, vec2(-0.3, 1.0), uTime * 0.9);
-      wave += gerstnerWave(worldXZ, 0.05, 4.0, vec2(0.8, -0.6), uTime * 1.0);
+      wave += gerstnerWave(worldXZ, 0.08 * chop, 12.0, vec2(1.0, 0.2), uTime * 0.7, t, b) * strength;
+      tangent += t - vec3(1.0, 0.0, 0.0);
+      binormal += b - vec3(0.0, 0.0, 1.0);
       
-      // Small ripples using noise
-      float ripple1 = snoise(vec3(worldXZ * 0.5, uTime * 0.3)) * 0.08;
-      float ripple2 = snoise(vec3(worldXZ * 1.0, uTime * 0.5)) * 0.04;
-      float ripple3 = snoise(vec3(worldXZ * 2.0, uTime * 0.7)) * 0.02;
+      wave += gerstnerWave(worldXZ, 0.06 * chop, 8.0, vec2(-0.2, 1.0), uTime * 0.85, t, b) * strength;
+      tangent += t - vec3(1.0, 0.0, 0.0);
+      binormal += b - vec3(0.0, 0.0, 1.0);
       
-      wave.y += ripple1 + ripple2 + ripple3;
+      wave += gerstnerWave(worldXZ, 0.05 * chop, 6.0, vec2(0.7, -0.7), uTime * 0.95, t, b) * strength;
+      tangent += t - vec3(1.0, 0.0, 0.0);
+      binormal += b - vec3(0.0, 0.0, 1.0);
+      
+      // Small chop waves
+      wave += gerstnerWave(worldXZ, 0.035 * chop, 3.5, vec2(1.0, 0.5), uTime * 1.3, t, b) * strength;
+      wave += gerstnerWave(worldXZ, 0.025 * chop, 2.5, vec2(-0.5, 1.0), uTime * 1.5, t, b) * strength;
+      wave += gerstnerWave(worldXZ, 0.02 * chop, 1.8, vec2(0.8, 0.6), uTime * 1.8, t, b) * strength;
+      
+      // Fine detail from noise
+      float detail1 = snoise(vec3(worldXZ * 0.15, uTime * 0.25)) * 0.12 * strength;
+      float detail2 = snoise(vec3(worldXZ * 0.35, uTime * 0.4)) * 0.06 * strength;
+      float detail3 = snoise(vec3(worldXZ * 0.8, uTime * 0.6)) * 0.03 * strength;
+      float detail4 = snoise(vec3(worldXZ * 1.5, uTime * 0.8)) * 0.015 * strength;
+      
+      wave.y += detail1 + detail2 + detail3 + detail4;
       
       pos += wave;
       vHeight = wave.y;
       
-      // Calculate normal from wave gradient
-      float eps = 0.1;
-      vec3 waveRight = gerstnerWave(worldXZ + vec2(eps, 0.0), 0.15, 30.0, vec2(1.0, 0.5), uTime * 0.4);
-      vec3 waveLeft = gerstnerWave(worldXZ - vec2(eps, 0.0), 0.15, 30.0, vec2(1.0, 0.5), uTime * 0.4);
-      vec3 waveForward = gerstnerWave(worldXZ + vec2(0.0, eps), 0.15, 30.0, vec2(1.0, 0.5), uTime * 0.4);
-      vec3 waveBack = gerstnerWave(worldXZ - vec2(0.0, eps), 0.15, 30.0, vec2(1.0, 0.5), uTime * 0.4);
+      // Calculate proper normal from tangent and binormal
+      vNormal = normalize(cross(binormal, tangent));
       
-      vec3 tangent = normalize(vec3(2.0 * eps, waveRight.y - waveLeft.y, 0.0));
-      vec3 bitangent = normalize(vec3(0.0, waveForward.y - waveBack.y, 2.0 * eps));
-      vNormal = normalize(cross(bitangent, tangent));
+      // Add normal detail from noise
+      vec3 noiseNormal = vec3(
+        snoise(vec3(worldXZ * 0.5, uTime * 0.3)),
+        1.0,
+        snoise(vec3(worldXZ * 0.5 + 100.0, uTime * 0.3))
+      );
+      vNormal = normalize(mix(vNormal, normalize(noiseNormal), 0.15));
       
-      vec4 worldPosition = modelMatrix * vec4(pos, 1.0);
-      vWorldPosition = worldPosition.xyz;
+      worldPos = modelMatrix * vec4(pos, 1.0);
+      vWorldPosition = worldPos.xyz;
       
-      gl_Position = projectionMatrix * viewMatrix * worldPosition;
+      // Foam at wave crests
+      float steepness = length(tangent - vec3(1.0, 0.0, 0.0)) + length(binormal - vec3(0.0, 0.0, 1.0));
+      vFoam = smoothstep(0.3, 0.8, vHeight * 2.0 + steepness * 0.3);
+      vFoam *= smoothstep(0.0, 0.15, vHeight);
+      
+      // Reflection coordinates
+      vReflectionCoord = projectionMatrix * viewMatrix * worldPos;
+      
+      gl_Position = projectionMatrix * viewMatrix * worldPos;
     }
   `
 
@@ -170,74 +249,152 @@ export function SeaWater({ position = [0, 0, 0] }: SeaWaterProps) {
     uniform vec3 uCameraPosition;
     uniform vec3 uSunDirection;
     uniform vec3 uDeepColor;
+    uniform vec3 uMidColor;
     uniform vec3 uShallowColor;
     uniform vec3 uFresnelColor;
     uniform vec3 uSkyColorTop;
     uniform vec3 uSkyColorHorizon;
+    uniform vec3 uFoamColor;
+    uniform sampler2D uReflectionTexture;
     
     varying vec2 vUv;
     varying vec3 vWorldPosition;
     varying vec3 vNormal;
     varying float vHeight;
+    varying vec4 vReflectionCoord;
+    varying float vFoam;
+    
+    // Fresnel schlick approximation
+    float fresnel(vec3 viewDir, vec3 normal, float power) {
+      return pow(1.0 - max(dot(viewDir, normal), 0.0), power);
+    }
     
     void main() {
       vec3 normal = normalize(vNormal);
       vec3 viewDir = normalize(uCameraPosition - vWorldPosition);
       
-      // Fresnel effect - more sky reflection at grazing angles
-      float fresnel = pow(1.0 - max(dot(viewDir, normal), 0.0), 4.0);
-      fresnel = clamp(fresnel, 0.05, 0.98);
+      // Fresnel effect with more realistic power
+      float fresnelTerm = fresnel(viewDir, normal, 3.5);
+      fresnelTerm = clamp(fresnelTerm, 0.02, 0.98);
       
-      // Sky reflection based on reflected view direction
+      // Sky reflection based on reflected direction
       vec3 reflectDir = reflect(-viewDir, normal);
       float skyGradient = reflectDir.y * 0.5 + 0.5;
       skyGradient = clamp(skyGradient, 0.0, 1.0);
-      vec3 skyReflection = mix(uSkyColorHorizon, uSkyColorTop, pow(skyGradient, 0.6));
+      vec3 skyReflection = mix(uSkyColorHorizon, uSkyColorTop, pow(skyGradient, 0.5));
       
-      // Add cloud-like variation to reflection
-      float cloudPattern = sin(reflectDir.x * 3.0 + uTime * 0.1) * sin(reflectDir.z * 2.0 + uTime * 0.05);
-      cloudPattern = cloudPattern * 0.5 + 0.5;
-      skyReflection = mix(skyReflection, vec3(0.95, 0.97, 1.0), cloudPattern * 0.15 * skyGradient);
+      // Add variation to sky reflection
+      float cloudVar = sin(reflectDir.x * 4.0 + uTime * 0.08) * cos(reflectDir.z * 3.0 + uTime * 0.06);
+      cloudVar = cloudVar * 0.5 + 0.5;
+      skyReflection = mix(skyReflection, vec3(0.95, 0.98, 1.0), cloudVar * 0.2 * skyGradient);
       
-      // Water color based on view angle and wave height
-      float depthFactor = 1.0 - fresnel;
-      vec3 waterColor = mix(uShallowColor, uDeepColor, depthFactor);
+      // Planar reflection lookup with distortion
+      vec2 reflectionUV = vReflectionCoord.xy / vReflectionCoord.w;
+      reflectionUV = reflectionUV * 0.5 + 0.5;
+      reflectionUV.y = 1.0 - reflectionUV.y;
+      
+      // Distort reflection based on normal
+      vec2 distortion = normal.xz * 0.05;
+      reflectionUV += distortion;
+      
+      vec4 planarReflection = texture2D(uReflectionTexture, clamp(reflectionUV, 0.0, 1.0));
+      
+      // Blend planar and sky reflections
+      vec3 reflection = mix(skyReflection, planarReflection.rgb, planarReflection.a * 0.6);
+      
+      // Water color gradient based on depth/view angle
+      float depthFactor = dot(viewDir, vec3(0.0, 1.0, 0.0));
+      depthFactor = clamp(depthFactor, 0.0, 1.0);
+      vec3 waterColor = mix(uDeepColor, uMidColor, depthFactor);
+      waterColor = mix(waterColor, uShallowColor, pow(depthFactor, 2.0));
       
       // Lighter color at wave crests
-      float crestHighlight = smoothstep(0.0, 0.2, vHeight);
-      waterColor = mix(waterColor, uShallowColor * 1.3, crestHighlight * 0.3);
+      float crestHighlight = smoothstep(-0.1, 0.25, vHeight);
+      waterColor = mix(waterColor, uShallowColor * 1.2, crestHighlight * 0.4);
       
-      // Combine water and sky reflection with fresnel
-      vec3 finalColor = mix(waterColor, skyReflection, fresnel);
+      // Combine water and reflection
+      vec3 finalColor = mix(waterColor, reflection, fresnelTerm);
       
-      // Specular sun highlight
+      // Subsurface scattering effect
+      float sss = pow(max(0.0, vHeight + 0.1), 2.0) * fresnelTerm;
+      vec3 sssColor = vec3(0.1, 0.4, 0.35);
+      finalColor += sssColor * sss * 0.3;
+      
+      // Sun specular highlight
       vec3 halfVec = normalize(uSunDirection + viewDir);
-      float specular = pow(max(dot(normal, halfVec), 0.0), 256.0);
-      finalColor += vec3(1.0, 0.98, 0.9) * specular * 2.0;
+      float specular = pow(max(dot(normal, halfVec), 0.0), 512.0);
+      finalColor += vec3(1.0, 0.98, 0.92) * specular * 3.0;
       
-      // Broader sun glitter
-      float glitter = pow(max(dot(normal, halfVec), 0.0), 32.0);
-      finalColor += vec3(1.0, 0.95, 0.85) * glitter * 0.4;
+      // Sun glitter (broader specular)
+      float glitter = pow(max(dot(normal, halfVec), 0.0), 64.0);
+      finalColor += vec3(1.0, 0.96, 0.88) * glitter * 0.5;
       
-      // Subsurface scattering at wave peaks (greenish tint)
-      float sss = max(0.0, vHeight) * fresnel;
-      finalColor += vec3(0.1, 0.3, 0.25) * sss * 0.5;
+      // Fine glitter from normal variation
+      float microGlitter = pow(max(dot(normal, halfVec), 0.0), 16.0);
+      finalColor += vec3(1.0, 0.98, 0.95) * microGlitter * 0.15;
       
-      // Distance fog - blend to horizon color
+      // Foam on wave crests
+      finalColor = mix(finalColor, uFoamColor, vFoam * 0.4);
+      
+      // Distance fog to horizon
       float dist = length(vWorldPosition.xz - uCameraPosition.xz);
-      float fogFactor = 1.0 - exp(-dist * 0.003);
-      fogFactor = clamp(fogFactor, 0.0, 0.85);
-      finalColor = mix(finalColor, uSkyColorHorizon, fogFactor);
+      float fogFactor = 1.0 - exp(-dist * 0.002);
+      fogFactor = clamp(fogFactor, 0.0, 0.9);
+      vec3 fogColor = mix(uSkyColorHorizon, uSkyColorTop * 0.9, 0.3);
+      finalColor = mix(finalColor, fogColor, fogFactor);
       
       gl_FragColor = vec4(finalColor, 1.0);
     }
   `
 
+  // Render reflection
   useFrame((state) => {
-    if (!materialRef.current) return
-    materialRef.current.uniforms.uTime.value = state.clock.elapsedTime
+    if (!materialRef.current || !meshRef.current) return
+    
+    const time = state.clock.elapsedTime
+    materialRef.current.uniforms.uTime.value = time
     materialRef.current.uniforms.uCameraPosition.value.copy(camera.position)
+    
+    // Render planar reflection
+    const waterY = position[1]
+    
+    // Store original camera state
+    const originalCameraPosition = camera.position.clone()
+    const originalCameraQuaternion = camera.quaternion.clone()
+    
+    // Mirror camera for reflection
+    reflectionCamera.copy(camera as THREE.PerspectiveCamera)
+    reflectionCamera.position.y = -camera.position.y + 2 * waterY
+    reflectionCamera.rotation.x = -camera.rotation.x
+    reflectionCamera.updateMatrixWorld()
+    reflectionCamera.updateProjectionMatrix()
+    
+    // Hide water mesh during reflection render
+    meshRef.current.visible = false
+    
+    // Set up clipping
+    gl.clippingPlanes = [clipPlane]
+    
+    // Render reflection
+    const originalRenderTarget = gl.getRenderTarget()
+    gl.setRenderTarget(reflectionRenderTarget)
+    gl.clear()
+    gl.render(scene, reflectionCamera)
+    gl.setRenderTarget(originalRenderTarget)
+    
+    // Restore
+    gl.clippingPlanes = []
+    meshRef.current.visible = true
+    camera.position.copy(originalCameraPosition)
+    camera.quaternion.copy(originalCameraQuaternion)
   })
+
+  // Cleanup
+  useEffect(() => {
+    return () => {
+      reflectionRenderTarget.dispose()
+    }
+  }, [reflectionRenderTarget])
 
   return (
     <mesh
@@ -246,7 +403,7 @@ export function SeaWater({ position = [0, 0, 0] }: SeaWaterProps) {
       position={[position[0], position[1], position[2]]}
       receiveShadow
     >
-      <planeGeometry args={[1000, 1000, 512, 512]} />
+      <planeGeometry args={[1000, 1000, 256, 256]} />
       <shaderMaterial
         ref={materialRef}
         vertexShader={vertexShader}
