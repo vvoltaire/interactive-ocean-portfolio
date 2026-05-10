@@ -7,6 +7,7 @@ import * as THREE from 'three'
 import { motion, AnimatePresence } from 'framer-motion'
 import type { Project } from '@/lib/projects'
 import { getWaveData, getNormalRotation } from '@/lib/wave-utils'
+import { getProjectModel } from './project-models'
 import { Headphones, Globe, Gamepad2, BarChart3, Smartphone, Bot } from 'lucide-react'
 
 interface FloatingProjectProps {
@@ -26,60 +27,81 @@ const iconMap = {
 
 export function FloatingProject({ project, onSelect, isSelected }: FloatingProjectProps) {
   const groupRef = useRef<THREE.Group>(null)
-  const meshRef = useRef<THREE.Mesh>(null)
-  const edgesRef = useRef<THREE.LineSegments>(null)
+  const modelRef = useRef<THREE.Group>(null)
   const [hovered, setHovered] = useState(false)
   const Icon = iconMap[project.icon]
   const initialRotationY = useRef(Math.random() * Math.PI * 2)
   
-  // Buoyancy parameters - increased offset so cubes sit ON the water, not in it
-  const buoyancyOffset = 0.75 // How high the cube floats above water surface
-  const dampingFactor = 0.08 // Lower = smoother interpolation
-  const heightDampingFactor = 0.12 // Separate damping for vertical movement
+  // Get the appropriate 3D model for this project
+  const ProjectModel = useMemo(() => getProjectModel(project.id), [project.id])
   
-  // Store previous values for smooth interpolation (lerp)
+  // FFT-style buoyancy parameters - heavy, stable objects
+  // 40% submerged - negative offset to sink them deeper
+  const submersionDepth = -0.15 // How deep below waterline (40% submerged)
+  const buoyancyOffset = 0.4 // Base height offset
+  
+  // High damping for heavy, stable feel
+  const linearDamping = 0.03 // Very slow height changes
+  const angularDamping = 0.04 // Very slow rotation changes
+  
+  // Store previous values for smooth lerp interpolation
   const prevRotation = useRef({ x: 0, z: 0 })
-  const prevHeight = useRef(buoyancyOffset)
-
-  // Create edge geometry for cube outline
-  const edgesGeometry = useMemo(() => {
-    const box = new THREE.BoxGeometry(0.72, 0.72, 0.72)
-    return new THREE.EdgesGeometry(box)
-  }, [])
+  const prevHeight = useRef(submersionDepth + buoyancyOffset)
+  const prevVelocityY = useRef(0)
+  const prevAngularVelX = useRef(0)
+  const prevAngularVelZ = useRef(0)
 
   useFrame((state) => {
-    if (!groupRef.current || !meshRef.current) return
+    if (!groupRef.current || !modelRef.current) return
     
     const time = state.clock.elapsedTime
     const x = project.position[0]
     const z = project.position[2]
     
-    // Get wave data at cube position using shared wave utilities (calmer choppiness)
+    // Get wave data at object position
     const waveData = getWaveData(x, z, time, 0.6)
     
-    // Target height - cube floats on wave surface with offset
-    const targetHeight = waveData.height + buoyancyOffset
+    // Target height - object floats on wave with submersion
+    const targetHeight = waveData.height + buoyancyOffset + submersionDepth
     
-    // Smooth height interpolation (lerp) - prevents jitter and getting buried
-    prevHeight.current += (targetHeight - prevHeight.current) * heightDampingFactor
+    // FFT-style spring physics for height (heavy damping)
+    const heightDiff = targetHeight - prevHeight.current
+    prevVelocityY.current += heightDiff * 0.1 // Spring force
+    prevVelocityY.current *= (1 - linearDamping) // Damping
+    prevHeight.current += prevVelocityY.current
+    
+    // Clamp to prevent extreme oscillations
+    prevHeight.current = THREE.MathUtils.lerp(
+      prevHeight.current, 
+      targetHeight, 
+      linearDamping * 2
+    )
+    
     groupRef.current.position.y = prevHeight.current
     
-    // Get rotation from wave normal
+    // Get rotation from wave normal (mostly upright)
     const [targetRotX, targetRotZ] = getNormalRotation(waveData.normal)
     
-    // Smooth rotation interpolation (lerp) - lower damping = smoother
-    prevRotation.current.x += (targetRotX - prevRotation.current.x) * dampingFactor
-    prevRotation.current.z += (targetRotZ - prevRotation.current.z) * dampingFactor
+    // Scale down rotation for heavy objects (stay more upright)
+    const scaledTargetRotX = targetRotX * 0.4
+    const scaledTargetRotZ = targetRotZ * 0.4
     
-    // Apply rotation to mesh
-    meshRef.current.rotation.x = prevRotation.current.x
-    meshRef.current.rotation.z = prevRotation.current.z
-    meshRef.current.rotation.y = initialRotationY.current + time * 0.08 // Slow spin
+    // Angular spring physics with high damping
+    const rotXDiff = scaledTargetRotX - prevRotation.current.x
+    const rotZDiff = scaledTargetRotZ - prevRotation.current.z
     
-    // Sync edge rotation with mesh
-    if (edgesRef.current) {
-      edgesRef.current.rotation.copy(meshRef.current.rotation)
-    }
+    prevAngularVelX.current += rotXDiff * 0.08
+    prevAngularVelZ.current += rotZDiff * 0.08
+    prevAngularVelX.current *= (1 - angularDamping)
+    prevAngularVelZ.current *= (1 - angularDamping)
+    
+    prevRotation.current.x += prevAngularVelX.current
+    prevRotation.current.z += prevAngularVelZ.current
+    
+    // Apply rotation to model
+    modelRef.current.rotation.x = prevRotation.current.x
+    modelRef.current.rotation.z = prevRotation.current.z
+    modelRef.current.rotation.y = initialRotationY.current + time * 0.05 // Very slow spin
   })
 
   return (
@@ -90,73 +112,41 @@ export function FloatingProject({ project, onSelect, isSelected }: FloatingProje
       onPointerOut={() => setHovered(false)}
       onClick={() => onSelect(project)}
     >
-      {/* Main floating cube */}
-      <mesh 
-        ref={meshRef}
-        position={[0, 0.4, 0]} 
-        scale={hovered || isSelected ? 1.15 : 1}
-        castShadow
+      {/* 3D Model */}
+      <group 
+        ref={modelRef}
+        position={[0, 0.1, 0]} 
+        scale={hovered || isSelected ? 1.1 : 1}
       >
-        <boxGeometry args={[0.7, 0.7, 0.7]} />
-        <meshPhysicalMaterial
-          color={project.color}
-          roughness={0.15}
-          metalness={0.1}
-          transmission={0.3}
-          thickness={0.5}
-          clearcoat={0.8}
-          clearcoatRoughness={0.2}
-          emissive={project.color}
-          emissiveIntensity={hovered || isSelected ? 0.4 : 0.15}
+        <ProjectModel 
+          color={project.color} 
+          hovered={hovered} 
+          isSelected={isSelected} 
         />
-      </mesh>
-
-      {/* Cube edge highlight */}
-      <lineSegments
-        ref={edgesRef}
-        position={[0, 0.4, 0]}
-        scale={hovered || isSelected ? 1.15 : 1}
-        geometry={edgesGeometry}
-      >
-        <lineBasicMaterial
-          color={project.color}
-          transparent
-          opacity={hovered || isSelected ? 0.8 : 0.4}
-        />
-      </lineSegments>
-
-      {/* Inner glowing core */}
-      <mesh position={[0, 0.4, 0]} scale={0.25}>
-        <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial
-          color={project.color}
-          emissive={project.color}
-          emissiveIntensity={hovered || isSelected ? 3 : 1.5}
-        />
-      </mesh>
+      </group>
 
       {/* Water surface reflection glow */}
-      <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <circleGeometry args={[0.6, 32]} />
+      <mesh position={[0, -0.05, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[0.5, 32]} />
         <meshBasicMaterial
           color={project.color}
           transparent
-          opacity={0.12}
+          opacity={0.15}
           side={THREE.DoubleSide}
         />
       </mesh>
 
       {/* Point light for glow effect */}
       <pointLight
-        position={[0, 0.4, 0]}
+        position={[0, 0.3, 0]}
         color={project.color}
-        intensity={hovered || isSelected ? 2 : 0.8}
-        distance={3}
+        intensity={hovered || isSelected ? 1.5 : 0.6}
+        distance={2.5}
       />
 
-      {/* HTML Label Card */}
+      {/* HTML Label Card - positioned higher for readability */}
       <Html
-        position={[0, 1.2, 0]}
+        position={[0, 1.4, 0]}
         center
         distanceFactor={10}
         style={{ pointerEvents: 'none' }}
