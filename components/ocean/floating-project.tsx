@@ -6,6 +6,7 @@ import { Html } from '@react-three/drei'
 import * as THREE from 'three'
 import { motion, AnimatePresence } from 'framer-motion'
 import type { Project } from '@/lib/projects'
+import { getWaveData, getNormalRotation } from '@/lib/wave-utils'
 import { Headphones, Globe, Gamepad2, BarChart3, Smartphone, Bot } from 'lucide-react'
 
 interface FloatingProjectProps {
@@ -26,10 +27,17 @@ const iconMap = {
 export function FloatingProject({ project, onSelect, isSelected }: FloatingProjectProps) {
   const groupRef = useRef<THREE.Group>(null)
   const meshRef = useRef<THREE.Mesh>(null)
+  const edgesRef = useRef<THREE.LineSegments>(null)
   const [hovered, setHovered] = useState(false)
   const Icon = iconMap[project.icon]
-  const initialY = useRef(project.position[1])
-  const initialRotation = useRef(Math.random() * Math.PI * 2)
+  const initialRotationY = useRef(Math.random() * Math.PI * 2)
+  
+  // Buoyancy parameters
+  const buoyancyOffset = 0.5 // How high the cube floats above water surface
+  const dampingFactor = 0.15 // Smoothing for rotation changes
+  
+  // Store previous rotation for smooth interpolation
+  const prevRotation = useRef({ x: 0, z: 0 })
 
   // Create edge geometry for cube outline
   const edgesGeometry = useMemo(() => {
@@ -38,31 +46,33 @@ export function FloatingProject({ project, onSelect, isSelected }: FloatingProje
   }, [])
 
   useFrame((state) => {
-    if (groupRef.current && meshRef.current) {
-      const time = state.clock.elapsedTime
-      const x = project.position[0]
-      const z = project.position[2]
-      
-      // Match the Gerstner wave motion from the water shader
-      // Large swells
-      const wave1 = Math.sin(((x + z * 0.5) * 2 * Math.PI / 30) - time * 0.4) * 0.15
-      const wave2 = Math.sin(((x * 0.7 + z) * 2 * Math.PI / 20) - time * 0.5) * 0.12
-      const wave3 = Math.sin(((-x * 0.5 + z * 0.8) * 2 * Math.PI / 15) - time * 0.6) * 0.1
-      
-      // Medium waves  
-      const wave4 = Math.sin(((x + z * 0.3) * 2 * Math.PI / 8) - time * 0.8) * 0.08
-      const wave5 = Math.sin(((-x * 0.3 + z) * 2 * Math.PI / 6) - time * 0.9) * 0.06
-      
-      const totalWaveHeight = wave1 + wave2 + wave3 + wave4 + wave5
-      groupRef.current.position.y = initialY.current + totalWaveHeight + 0.4
-      
-      // Tilt based on wave gradient (like actually floating)
-      const tiltX = Math.cos(((x + z * 0.5) * 2 * Math.PI / 30) - time * 0.4) * 0.08
-      const tiltZ = Math.cos(((-x * 0.5 + z * 0.8) * 2 * Math.PI / 15) - time * 0.6) * 0.06
-      
-      meshRef.current.rotation.y = initialRotation.current + time * 0.1
-      meshRef.current.rotation.x = tiltX
-      meshRef.current.rotation.z = tiltZ
+    if (!groupRef.current || !meshRef.current) return
+    
+    const time = state.clock.elapsedTime
+    const x = project.position[0]
+    const z = project.position[2]
+    
+    // Get wave data at cube position using shared wave utilities
+    const waveData = getWaveData(x, z, time, 1.2)
+    
+    // Apply buoyancy - cube floats on wave surface
+    groupRef.current.position.y = waveData.height + buoyancyOffset
+    
+    // Get rotation from wave normal
+    const [targetRotX, targetRotZ] = getNormalRotation(waveData.normal)
+    
+    // Smooth rotation interpolation (damping)
+    prevRotation.current.x += (targetRotX - prevRotation.current.x) * dampingFactor
+    prevRotation.current.z += (targetRotZ - prevRotation.current.z) * dampingFactor
+    
+    // Apply rotation to mesh
+    meshRef.current.rotation.x = prevRotation.current.x
+    meshRef.current.rotation.z = prevRotation.current.z
+    meshRef.current.rotation.y = initialRotationY.current + time * 0.08 // Slow spin
+    
+    // Sync edge rotation with mesh
+    if (edgesRef.current) {
+      edgesRef.current.rotation.copy(meshRef.current.rotation)
     }
   })
 
@@ -97,10 +107,10 @@ export function FloatingProject({ project, onSelect, isSelected }: FloatingProje
 
       {/* Cube edge highlight */}
       <lineSegments
+        ref={edgesRef}
         position={[0, 0.4, 0]}
         scale={hovered || isSelected ? 1.15 : 1}
         geometry={edgesGeometry}
-        rotation={meshRef.current?.rotation}
       >
         <lineBasicMaterial
           color={project.color}
@@ -119,13 +129,13 @@ export function FloatingProject({ project, onSelect, isSelected }: FloatingProje
         />
       </mesh>
 
-      {/* Water reflection effect */}
-      <mesh position={[0, -0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[1, 1]} />
+      {/* Water surface reflection glow */}
+      <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[0.6, 32]} />
         <meshBasicMaterial
           color={project.color}
           transparent
-          opacity={0.15}
+          opacity={0.12}
           side={THREE.DoubleSide}
         />
       </mesh>
