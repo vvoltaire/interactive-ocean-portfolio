@@ -158,7 +158,7 @@ export function OceanScene({ onSelectProject, selectedProject }: OceanSceneProps
   return (
     <div className="w-full h-screen">
       <Canvas
-        camera={{ position: [0, 3, 15], fov: 60, near: 0.1, far: 2000 }}
+        camera={{ position: [0, 3, 15], fov: 60, near: 0.1, far: 500000 }}
         gl={{ 
           antialias: true, 
           alpha: false,

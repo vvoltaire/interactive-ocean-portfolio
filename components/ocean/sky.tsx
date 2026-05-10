@@ -199,14 +199,19 @@ export function DynamicSky({ overrideHour, onConfigChange }: DynamicSkyProps) {
     }
   }, [config, onConfigChange])
   
+  // Normalize sun position to unit vector for drei Sky
+  const normalizedSunPos: [number, number, number] = useMemo(() => {
+    const [x, y, z] = config.sunPosition
+    const len = Math.sqrt(x * x + y * y + z * z)
+    return [x / len, y / len, z / len]
+  }, [config.sunPosition])
+  
   return (
     <>
       {/* Main sky dome using drei's Sky component */}
       <DreiSky
         distance={450000}
-        sunPosition={config.sunPosition}
-        inclination={0}
-        azimuth={0.25}
+        sunPosition={normalizedSunPos}
         turbidity={config.turbidity}
         rayleigh={config.rayleigh}
         mieCoefficient={config.mieCoefficient}
