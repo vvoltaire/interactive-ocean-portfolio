@@ -7,6 +7,7 @@ import * as THREE from 'three'
 import { SeaWater } from './water'
 import { Sky, calculateSunPosition } from './sky'
 import { FloatingProject } from './floating-project'
+import { SpatialInteractionsPanel } from './spatial-ui'
 import { projects, type Project } from '@/lib/projects'
 
 interface OceanSceneProps {
@@ -169,6 +170,13 @@ function Scene({ onSelectProject, selectedProject }: OceanSceneProps) {
           isSelected={selectedProject?.id === project.id}
         />
       ))}
+      
+      {/* Spatial UI - floating glassmorphism panel */}
+      <SpatialInteractionsPanel 
+        position={[10, 2.5, 4]} 
+        rotation={[0, -0.4, 0]}
+        scale={1}
+      />
       
       {/* Camera controls */}
       <OrbitControls
