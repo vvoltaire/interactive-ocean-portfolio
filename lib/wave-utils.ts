@@ -86,8 +86,9 @@ function normalize(v: [number, number, number]): [number, number, number] {
 /**
  * Calculate wave height and surface normal at a given world position
  * Matches the Gerstner wave calculations in the water shader
+ * Default choppiness reduced to 0.6 for calmer water
  */
-export function getWaveData(x: number, z: number, time: number, choppiness: number = 1.2): WaveResult {
+export function getWaveData(x: number, z: number, time: number, choppiness: number = 0.6): WaveResult {
   let totalHeight = 0
   let tangent: [number, number, number] = [1, 0, 0]
   let binormal: [number, number, number] = [0, 0, 1]

@@ -32,12 +32,14 @@ export function FloatingProject({ project, onSelect, isSelected }: FloatingProje
   const Icon = iconMap[project.icon]
   const initialRotationY = useRef(Math.random() * Math.PI * 2)
   
-  // Buoyancy parameters
-  const buoyancyOffset = 0.5 // How high the cube floats above water surface
-  const dampingFactor = 0.15 // Smoothing for rotation changes
+  // Buoyancy parameters - increased offset so cubes sit ON the water, not in it
+  const buoyancyOffset = 0.75 // How high the cube floats above water surface
+  const dampingFactor = 0.08 // Lower = smoother interpolation
+  const heightDampingFactor = 0.12 // Separate damping for vertical movement
   
-  // Store previous rotation for smooth interpolation
+  // Store previous values for smooth interpolation (lerp)
   const prevRotation = useRef({ x: 0, z: 0 })
+  const prevHeight = useRef(buoyancyOffset)
 
   // Create edge geometry for cube outline
   const edgesGeometry = useMemo(() => {
@@ -52,16 +54,20 @@ export function FloatingProject({ project, onSelect, isSelected }: FloatingProje
     const x = project.position[0]
     const z = project.position[2]
     
-    // Get wave data at cube position using shared wave utilities
-    const waveData = getWaveData(x, z, time, 1.2)
+    // Get wave data at cube position using shared wave utilities (calmer choppiness)
+    const waveData = getWaveData(x, z, time, 0.6)
     
-    // Apply buoyancy - cube floats on wave surface
-    groupRef.current.position.y = waveData.height + buoyancyOffset
+    // Target height - cube floats on wave surface with offset
+    const targetHeight = waveData.height + buoyancyOffset
+    
+    // Smooth height interpolation (lerp) - prevents jitter and getting buried
+    prevHeight.current += (targetHeight - prevHeight.current) * heightDampingFactor
+    groupRef.current.position.y = prevHeight.current
     
     // Get rotation from wave normal
     const [targetRotX, targetRotZ] = getNormalRotation(waveData.normal)
     
-    // Smooth rotation interpolation (damping)
+    // Smooth rotation interpolation (lerp) - lower damping = smoother
     prevRotation.current.x += (targetRotX - prevRotation.current.x) * dampingFactor
     prevRotation.current.z += (targetRotZ - prevRotation.current.z) * dampingFactor
     

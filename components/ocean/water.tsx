@@ -38,17 +38,20 @@ export function SeaWater({ position = [0, 0, 0] }: SeaWaterProps) {
       uSunDirection: { value: new THREE.Vector3(0.5, 0.6, -0.3).normalize() },
       uReflectionTexture: { value: reflectionRenderTarget.texture },
       uReflectionMatrix: { value: new THREE.Matrix4() },
-      // Ocean colors - richer, more varied
-      uDeepColor: { value: new THREE.Color('#0a3d5c') },
-      uMidColor: { value: new THREE.Color('#1a6b8a') },
-      uShallowColor: { value: new THREE.Color('#3498b8') },
-      uFresnelColor: { value: new THREE.Color('#7ec8e8') },
-      uSkyColorTop: { value: new THREE.Color('#5da4d4') },
-      uSkyColorHorizon: { value: new THREE.Color('#c8e4f4') },
-      uFoamColor: { value: new THREE.Color('#ffffff') },
-      // Wave parameters
-      uWaveStrength: { value: 1.0 },
-      uChoppiness: { value: 1.2 },
+      // Ocean colors - deep navy/International Klein Blue
+      uDeepColor: { value: new THREE.Color('#001a33') },
+      uMidColor: { value: new THREE.Color('#003366') },
+      uShallowColor: { value: new THREE.Color('#0055a4') },
+      uFresnelColor: { value: new THREE.Color('#2277bb') },
+      uSkyColorTop: { value: new THREE.Color('#4a90c2') },
+      uSkyColorHorizon: { value: new THREE.Color('#b8d4e8') },
+      uFoamColor: { value: new THREE.Color('#e8f4ff') },
+      // Wave parameters - calmer water (50% reduction)
+      uWaveStrength: { value: 0.5 },
+      uChoppiness: { value: 0.6 },
+      // Reflection parameters
+      uReflectivity: { value: 0.3 },
+      uRoughness: { value: 0.4 },
     }),
     [reflectionRenderTarget.texture]
   )
@@ -256,6 +259,8 @@ export function SeaWater({ position = [0, 0, 0] }: SeaWaterProps) {
     uniform vec3 uSkyColorHorizon;
     uniform vec3 uFoamColor;
     uniform sampler2D uReflectionTexture;
+    uniform float uReflectivity;
+    uniform float uRoughness;
     
     varying vec2 vUv;
     varying vec3 vWorldPosition;
@@ -288,19 +293,24 @@ export function SeaWater({ position = [0, 0, 0] }: SeaWaterProps) {
       cloudVar = cloudVar * 0.5 + 0.5;
       skyReflection = mix(skyReflection, vec3(0.95, 0.98, 1.0), cloudVar * 0.2 * skyGradient);
       
-      // Planar reflection lookup with distortion
+      // Planar reflection lookup with distortion and roughness blur
       vec2 reflectionUV = vReflectionCoord.xy / vReflectionCoord.w;
       reflectionUV = reflectionUV * 0.5 + 0.5;
       reflectionUV.y = 1.0 - reflectionUV.y;
       
-      // Distort reflection based on normal
-      vec2 distortion = normal.xz * 0.05;
+      // Distort reflection based on normal and roughness
+      vec2 distortion = normal.xz * (0.03 + uRoughness * 0.04);
       reflectionUV += distortion;
       
+      // Sample multiple times for roughness blur effect
       vec4 planarReflection = texture2D(uReflectionTexture, clamp(reflectionUV, 0.0, 1.0));
+      planarReflection += texture2D(uReflectionTexture, clamp(reflectionUV + vec2(0.003, 0.002) * uRoughness, 0.0, 1.0));
+      planarReflection += texture2D(uReflectionTexture, clamp(reflectionUV - vec2(0.002, 0.003) * uRoughness, 0.0, 1.0));
+      planarReflection += texture2D(uReflectionTexture, clamp(reflectionUV + vec2(-0.002, 0.003) * uRoughness, 0.0, 1.0));
+      planarReflection /= 4.0;
       
-      // Blend planar and sky reflections
-      vec3 reflection = mix(skyReflection, planarReflection.rgb, planarReflection.a * 0.6);
+      // Blend planar and sky reflections with reduced reflectivity
+      vec3 reflection = mix(skyReflection, planarReflection.rgb, planarReflection.a * uReflectivity);
       
       // Water color gradient based on depth/view angle
       float depthFactor = dot(viewDir, vec3(0.0, 1.0, 0.0));
@@ -320,18 +330,18 @@ export function SeaWater({ position = [0, 0, 0] }: SeaWaterProps) {
       vec3 sssColor = vec3(0.1, 0.4, 0.35);
       finalColor += sssColor * sss * 0.3;
       
-      // Sun specular highlight
+      // Sun specular highlight - reduced for less sun influence
       vec3 halfVec = normalize(uSunDirection + viewDir);
       float specular = pow(max(dot(normal, halfVec), 0.0), 512.0);
-      finalColor += vec3(1.0, 0.98, 0.92) * specular * 3.0;
+      finalColor += vec3(1.0, 0.98, 0.95) * specular * 1.5;
       
-      // Sun glitter (broader specular)
+      // Sun glitter (broader specular) - subtle
       float glitter = pow(max(dot(normal, halfVec), 0.0), 64.0);
-      finalColor += vec3(1.0, 0.96, 0.88) * glitter * 0.5;
+      finalColor += vec3(1.0, 0.98, 0.95) * glitter * 0.25;
       
-      // Fine glitter from normal variation
+      // Fine glitter from normal variation - very subtle
       float microGlitter = pow(max(dot(normal, halfVec), 0.0), 16.0);
-      finalColor += vec3(1.0, 0.98, 0.95) * microGlitter * 0.15;
+      finalColor += vec3(1.0, 0.99, 0.97) * microGlitter * 0.08;
       
       // Foam on wave crests
       finalColor = mix(finalColor, uFoamColor, vFoam * 0.4);

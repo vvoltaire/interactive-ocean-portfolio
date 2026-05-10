@@ -13,9 +13,9 @@ interface SpatialUIPanelProps {
 }
 
 export function SpatialInteractionsPanel({ 
-  position = [8, 2.5, -2],
-  rotation = [0, -0.3, 0],
-  scale = 1 
+  position = [12, 1.2, 8],  // Bottom-right area
+  rotation = [0, -0.5, 0],
+  scale = 0.7  // Smaller scale
 }: SpatialUIPanelProps) {
   const groupRef = useRef<THREE.Group>(null)
   const initialY = useRef(position[1])
@@ -25,9 +25,9 @@ export function SpatialInteractionsPanel({
     if (groupRef.current) {
       const time = state.clock.elapsedTime
       // Subtle bob
-      groupRef.current.position.y = initialY.current + Math.sin(time * 0.5) * 0.08
+      groupRef.current.position.y = initialY.current + Math.sin(time * 0.5) * 0.04
       // Very slight rotation sway
-      groupRef.current.rotation.y = rotation[1] + Math.sin(time * 0.3) * 0.02
+      groupRef.current.rotation.y = rotation[1] + Math.sin(time * 0.3) * 0.01
     }
   })
 
@@ -50,55 +50,54 @@ export function SpatialInteractionsPanel({
         <div 
           className="pointer-events-auto select-none"
           style={{
-            background: 'linear-gradient(135deg, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0.1) 100%)',
-            backdropFilter: 'blur(20px)',
-            WebkitBackdropFilter: 'blur(20px)',
-            borderRadius: '16px',
-            border: '1px solid rgba(255,255,255,0.3)',
+            background: 'linear-gradient(135deg, rgba(255,255,255,0.15) 0%, rgba(255,255,255,0.05) 100%)',
+            backdropFilter: 'blur(24px)',
+            WebkitBackdropFilter: 'blur(24px)',
+            borderRadius: '12px',
+            border: '1px solid rgba(255,255,255,0.2)',
             boxShadow: `
-              0 8px 32px rgba(0,0,0,0.12),
-              0 2px 8px rgba(0,0,0,0.08),
-              inset 0 1px 0 rgba(255,255,255,0.4),
-              inset 0 -1px 0 rgba(0,0,0,0.05)
+              0 4px 20px rgba(0,0,0,0.08),
+              0 1px 4px rgba(0,0,0,0.05),
+              inset 0 1px 0 rgba(255,255,255,0.25)
             `,
-            padding: '20px 24px',
-            minWidth: '220px',
+            padding: '14px 18px',
+            minWidth: '160px',
           }}
         >
           {/* Header with subtle gradient */}
           <div 
-            className="flex items-center gap-2 mb-4 pb-3"
+            className="flex items-center gap-1.5 mb-2.5 pb-2"
             style={{
-              borderBottom: '1px solid rgba(255,255,255,0.2)',
+              borderBottom: '1px solid rgba(255,255,255,0.15)',
             }}
           >
             <Move3D 
-              className="w-4 h-4" 
-              style={{ color: 'rgba(30, 64, 100, 0.9)' }}
+              className="w-3 h-3" 
+              style={{ color: 'rgba(30, 64, 100, 0.8)' }}
             />
             <span 
-              className="text-sm font-semibold tracking-wide"
+              className="text-xs font-semibold tracking-wide"
               style={{ 
-                color: 'rgba(20, 50, 80, 0.95)',
-                textShadow: '0 1px 2px rgba(255,255,255,0.5)',
+                color: 'rgba(20, 50, 80, 0.9)',
+                textShadow: '0 1px 2px rgba(255,255,255,0.4)',
               }}
             >
-              Interactions
+              Controls
             </span>
           </div>
           
           {/* Interaction hints */}
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-2">
             <InteractionHint 
-              icon={<Hand className="w-3.5 h-3.5" />}
-              text="Drag to rotate camera"
+              icon={<Hand className="w-2.5 h-2.5" />}
+              text="Drag to rotate"
             />
             <InteractionHint 
-              icon={<MousePointer className="w-3.5 h-3.5" />}
-              text="Click cubes to select"
+              icon={<MousePointer className="w-2.5 h-2.5" />}
+              text="Click to select"
             />
             <InteractionHint 
-              icon={<ZoomIn className="w-3.5 h-3.5" />}
+              icon={<ZoomIn className="w-2.5 h-2.5" />}
               text="Scroll to zoom"
             />
           </div>
@@ -111,24 +110,24 @@ export function SpatialInteractionsPanel({
 function InteractionHint({ icon, text }: { icon: React.ReactNode; text: string }) {
   return (
     <div 
-      className="flex items-center gap-3"
+      className="flex items-center gap-2"
       style={{
-        color: 'rgba(30, 60, 90, 0.85)',
+        color: 'rgba(30, 60, 90, 0.8)',
       }}
     >
       <div 
-        className="flex items-center justify-center w-7 h-7 rounded-lg"
+        className="flex items-center justify-center w-5 h-5 rounded"
         style={{
-          background: 'rgba(255,255,255,0.4)',
-          boxShadow: 'inset 0 1px 2px rgba(255,255,255,0.5), 0 1px 2px rgba(0,0,0,0.05)',
+          background: 'rgba(255,255,255,0.3)',
+          boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.4)',
         }}
       >
         {icon}
       </div>
       <span 
-        className="text-xs font-medium"
+        className="text-[10px] font-medium"
         style={{
-          textShadow: '0 1px 1px rgba(255,255,255,0.4)',
+          textShadow: '0 1px 1px rgba(255,255,255,0.3)',
         }}
       >
         {text}
