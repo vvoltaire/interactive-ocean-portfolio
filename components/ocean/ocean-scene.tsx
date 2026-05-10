@@ -5,7 +5,7 @@ import { Canvas, useThree, useFrame } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
 import { SeaWater } from './water'
-import { Sky, calculateSunPosition } from './sky'
+import { DynamicSky, type TimeOfDayConfig } from './sky'
 import { FloatingProject } from './floating-project'
 import { SpatialInteractionsPanel } from './spatial-ui'
 import { projects, type Project } from '@/lib/projects'
@@ -13,16 +13,6 @@ import { projects, type Project } from '@/lib/projects'
 interface OceanSceneProps {
   onSelectProject: (project: Project | null) => void
   selectedProject: Project | null
-}
-
-// Sun configuration for time of day
-const SUN_CONFIG = {
-  elevation: 0.38, // Radians above horizon (golden hour)
-  azimuth: -0.3, // Direction angle
-  turbidity: 2.0, // Atmospheric haze (lower = clearer)
-  rayleigh: 1.2, // Blue sky intensity
-  mieCoefficient: 0.005, // Sun haze
-  mieDirectionalG: 0.8, // Sun glow spread
 }
 
 function CameraController({ selectedProject }: { selectedProject: Project | null }) {
@@ -49,114 +39,84 @@ function CameraController({ selectedProject }: { selectedProject: Project | null
   return null
 }
 
-// Dynamic lighting that follows the sun
-function SunLight({ sunPosition }: { sunPosition: THREE.Vector3 }) {
+// Dynamic lighting that follows the sun and sky config
+function DynamicLighting({ skyConfig }: { skyConfig: TimeOfDayConfig | null }) {
   const lightRef = useRef<THREE.DirectionalLight>(null)
   
-  // Calculate light color based on sun height
-  const sunHeight = sunPosition.y / sunPosition.length()
+  if (!skyConfig) return null
   
-  // Color shifts from warm white to orange/red as sun gets lower
-  const lightColor = new THREE.Color()
-  if (sunHeight > 0.3) {
-    lightColor.setHex(0xfff8e6) // Warm white
-  } else if (sunHeight > 0.1) {
-    const t = (sunHeight - 0.1) / 0.2
-    lightColor.setRGB(
-      1.0,
-      0.85 + t * 0.1,
-      0.65 + t * 0.25
-    )
-  } else {
-    const t = Math.max(0, sunHeight / 0.1)
-    lightColor.setRGB(
-      1.0,
-      0.7 + t * 0.15,
-      0.4 + t * 0.25
-    )
-  }
+  const [sx, sy, sz] = skyConfig.sunPosition
+  const sunHeight = sy / 100 // Normalize since sunPosition is at distance 100
   
-  // Intensity based on sun height
-  const intensity = Math.max(0.5, Math.min(2.5, sunHeight * 4 + 0.8))
+  // Adjust light color based on config
+  const lightColor = new THREE.Color(skyConfig.lightColor)
   
-  useEffect(() => {
-    if (lightRef.current) {
-      lightRef.current.position.copy(sunPosition)
-      lightRef.current.color.copy(lightColor)
-      lightRef.current.intensity = intensity
-    }
-  }, [sunPosition, lightColor, intensity])
-
-  return (
-    <directionalLight
-      ref={lightRef}
-      position={[sunPosition.x * 100, sunPosition.y * 100, sunPosition.z * 100]}
-      intensity={intensity}
-      color={lightColor}
-      castShadow
-      shadow-mapSize={[2048, 2048]}
-      shadow-camera-far={150}
-      shadow-camera-left={-30}
-      shadow-camera-right={30}
-      shadow-camera-top={30}
-      shadow-camera-bottom={-30}
-      shadow-bias={-0.0001}
-    />
-  )
-}
-
-function Scene({ onSelectProject, selectedProject }: OceanSceneProps) {
-  const [sunPosition, setSunPosition] = useState(() => 
-    calculateSunPosition(SUN_CONFIG.elevation, SUN_CONFIG.azimuth).multiplyScalar(100)
-  )
-  
-  const handleSunPositionChange = useCallback((pos: THREE.Vector3) => {
-    setSunPosition(pos)
-  }, [])
-
-  // Calculate ambient and fill light colors based on sun position
-  const sunHeight = sunPosition.y / sunPosition.length()
-  const ambientColor = sunHeight > 0.2 
-    ? new THREE.Color(0xffffff)
-    : new THREE.Color().setRGB(1.0, 0.95, 0.9)
-  const ambientIntensity = 0.4 + sunHeight * 0.3
-
   return (
     <>
-      <CameraController selectedProject={selectedProject} />
-      
-      {/* Dynamic sky with atmospheric scattering */}
-      <Sky 
-        sunElevation={SUN_CONFIG.elevation}
-        sunAzimuth={SUN_CONFIG.azimuth}
-        turbidity={SUN_CONFIG.turbidity}
-        rayleigh={SUN_CONFIG.rayleigh}
-        mieCoefficient={SUN_CONFIG.mieCoefficient}
-        mieDirectionalG={SUN_CONFIG.mieDirectionalG}
-        onSunPositionChange={handleSunPositionChange}
+      {/* Main sun/moon light */}
+      <directionalLight
+        ref={lightRef}
+        position={[sx, Math.max(sy, 10), sz]}
+        intensity={skyConfig.lightIntensity}
+        color={lightColor}
+        castShadow
+        shadow-mapSize={[2048, 2048]}
+        shadow-camera-far={150}
+        shadow-camera-left={-30}
+        shadow-camera-right={30}
+        shadow-camera-top={30}
+        shadow-camera-bottom={-30}
+        shadow-bias={-0.0001}
       />
       
-      {/* Ambient light - color shifts with time of day */}
-      <ambientLight intensity={ambientIntensity} color={ambientColor} />
+      {/* Ambient light - varies with time of day */}
+      <ambientLight 
+        intensity={skyConfig.ambientIntensity} 
+        color={skyConfig.isNight ? '#1a2a4a' : '#ffffff'} 
+      />
       
-      {/* Main sun light - position and color linked to sky */}
-      <SunLight sunPosition={sunPosition} />
-      
-      {/* Fill light from opposite side - cooler tone */}
+      {/* Fill light from opposite side */}
       <directionalLight
-        position={[-sunPosition.x * 0.5, sunPosition.y * 0.3, -sunPosition.z * 0.5]}
-        intensity={0.4}
-        color="#a8d4f0"
+        position={[-sx * 0.5, Math.max(sy * 0.3, 5), -sz * 0.5]}
+        intensity={skyConfig.isNight ? 0.1 : 0.4}
+        color={skyConfig.isNight ? '#4a5a8a' : '#a8d4f0'}
       />
       
       {/* Hemisphere light for sky/ground ambient */}
       <hemisphereLight
         args={[
-          sunHeight > 0.2 ? '#87ceeb' : '#c4a875', // Sky color
+          skyConfig.isNight ? '#1a2a4a' : '#87ceeb', // Sky color
           '#1a5a8a', // Ground/water reflection color
-          0.35
+          skyConfig.isNight ? 0.1 : 0.35
         ]}
       />
+    </>
+  )
+}
+
+function Scene({ onSelectProject, selectedProject }: OceanSceneProps) {
+  const [skyConfig, setSkyConfig] = useState<TimeOfDayConfig | null>(null)
+  
+  const handleSkyConfigChange = useCallback((config: TimeOfDayConfig) => {
+    setSkyConfig(config)
+  }, [])
+
+  return (
+    <>
+      <CameraController selectedProject={selectedProject} />
+      
+      {/* Dynamic sky with time-based sun position */}
+      <DynamicSky 
+        onConfigChange={handleSkyConfigChange}
+        // Uncomment below to override time for testing:
+        // overrideHour={12} // Noon
+        // overrideHour={6.5} // Sunrise
+        // overrideHour={19} // Sunset
+        // overrideHour={23} // Night
+      />
+      
+      {/* Dynamic lighting linked to sky */}
+      <DynamicLighting skyConfig={skyConfig} />
 
       {/* Sea water surface - extends to horizon */}
       <SeaWater position={[0, 0, 0]} />

@@ -1,312 +1,239 @@
 'use client'
 
-import { useRef, useMemo, useEffect } from 'react'
+import { useRef, useMemo, useEffect, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
+import { Sky as DreiSky, Stars } from '@react-three/drei'
 import * as THREE from 'three'
 
-interface SkyProps {
-  // Sun elevation angle in radians (0 = horizon, PI/2 = zenith)
-  sunElevation?: number
-  // Sun azimuth angle in radians
-  sunAzimuth?: number
-  // Atmospheric turbidity (1-10, higher = hazier)
-  turbidity?: number
-  // Rayleigh scattering coefficient (affects blue sky color)
-  rayleigh?: number
-  // Mie scattering coefficient (affects sun haze)
-  mieCoefficient?: number
-  // Mie directional factor (affects sun glow spread)
-  mieDirectionalG?: number
-  // Callback to get sun position for lighting
-  onSunPositionChange?: (position: THREE.Vector3) => void
+interface TimeOfDayConfig {
+  sunPosition: [number, number, number]
+  turbidity: number
+  rayleigh: number
+  mieCoefficient: number
+  mieDirectionalG: number
+  isNight: boolean
+  lightColor: string
+  lightIntensity: number
+  ambientIntensity: number
 }
 
-export function Sky({
-  sunElevation = 0.35, // Slightly above horizon for golden hour feel
-  sunAzimuth = 0.2,
-  turbidity = 2.5,
-  rayleigh = 1.5,
-  mieCoefficient = 0.005,
-  mieDirectionalG = 0.8,
-  onSunPositionChange,
-}: SkyProps) {
-  const materialRef = useRef<THREE.ShaderMaterial>(null)
-  const sunPositionRef = useRef(new THREE.Vector3())
+// Calculate sun position based on hour (0-24)
+function getSunPositionFromHour(hour: number): [number, number, number] {
+  // Map hour to angle: 6AM = sunrise (east), 12PM = zenith (south), 6PM = sunset (west)
+  // Sun rises at 6, peaks at 12, sets at 18
+  
+  // Normalize hour to 0-24 range
+  const h = ((hour % 24) + 24) % 24
+  
+  // Calculate elevation angle
+  // 6AM: sun at horizon (0°), 12PM: highest point (~60°), 6PM: horizon again
+  let elevation: number
+  if (h >= 6 && h <= 18) {
+    // Daytime: sine wave from 0 to peak at noon back to 0
+    const dayProgress = (h - 6) / 12 // 0 at 6AM, 0.5 at noon, 1 at 6PM
+    elevation = Math.sin(dayProgress * Math.PI) * 60 // Peak at 60 degrees
+  } else {
+    // Nighttime: sun below horizon
+    const nightProgress = h >= 18 ? (h - 18) / 12 : (h + 6) / 12
+    elevation = -10 - Math.sin(nightProgress * Math.PI) * 20 // Below horizon
+  }
+  
+  // Calculate azimuth (east to west arc)
+  // 6AM: east (90°), 12PM: south (180°), 6PM: west (270°)
+  let azimuth: number
+  if (h >= 6 && h <= 18) {
+    azimuth = 90 + ((h - 6) / 12) * 180 // 90° to 270°
+  } else {
+    // Night: sun on the other side
+    const nightH = h >= 18 ? h - 18 : h + 6
+    azimuth = 270 + (nightH / 12) * 180 // 270° to 450° (90°)
+  }
+  
+  // Convert to radians and calculate position
+  const elevRad = (elevation * Math.PI) / 180
+  const azimRad = (azimuth * Math.PI) / 180
+  
+  const distance = 100
+  const x = distance * Math.cos(elevRad) * Math.sin(azimRad)
+  const y = distance * Math.sin(elevRad)
+  const z = distance * Math.cos(elevRad) * Math.cos(azimRad)
+  
+  return [x, y, z]
+}
 
-  // Calculate sun position from elevation and azimuth
-  const sunPosition = useMemo(() => {
-    const phi = Math.PI / 2 - sunElevation
-    const theta = sunAzimuth
-    const pos = new THREE.Vector3(
-      Math.sin(phi) * Math.cos(theta),
-      Math.cos(phi),
-      Math.sin(phi) * Math.sin(theta)
-    ).normalize()
-    sunPositionRef.current.copy(pos)
-    return pos
-  }, [sunElevation, sunAzimuth])
+// Get sky configuration based on time of day
+function getTimeOfDayConfig(hour: number): TimeOfDayConfig {
+  const h = ((hour % 24) + 24) % 24
+  const sunPosition = getSunPositionFromHour(h)
+  
+  // Night time: 9 PM to 5 AM
+  if (h >= 21 || h < 5) {
+    return {
+      sunPosition,
+      turbidity: 10,
+      rayleigh: 0.1,
+      mieCoefficient: 0.001,
+      mieDirectionalG: 0.7,
+      isNight: true,
+      lightColor: '#1a2a4a',
+      lightIntensity: 0.15,
+      ambientIntensity: 0.1,
+    }
+  }
+  
+  // Sunrise: 5 AM to 8 AM
+  if (h >= 5 && h < 8) {
+    const progress = (h - 5) / 3 // 0 to 1
+    return {
+      sunPosition,
+      turbidity: 4 - progress * 2, // 4 to 2
+      rayleigh: 1.5 + progress * 1, // 1.5 to 2.5
+      mieCoefficient: 0.01 - progress * 0.005, // 0.01 to 0.005
+      mieDirectionalG: 0.9,
+      isNight: false,
+      lightColor: progress < 0.5 ? '#ffb366' : '#ffd699',
+      lightIntensity: 0.5 + progress * 1.0,
+      ambientIntensity: 0.2 + progress * 0.2,
+    }
+  }
+  
+  // Morning/Midday: 8 AM to 4 PM (deep blue sky)
+  if (h >= 8 && h < 16) {
+    return {
+      sunPosition,
+      turbidity: 1.5, // Clear sky
+      rayleigh: 3.0, // Strong blue - deep saturated sky
+      mieCoefficient: 0.003,
+      mieDirectionalG: 0.75,
+      isNight: false,
+      lightColor: '#fff8f0',
+      lightIntensity: 2.0,
+      ambientIntensity: 0.45,
+    }
+  }
+  
+  // Afternoon: 4 PM to 6 PM (transitioning to golden hour)
+  if (h >= 16 && h < 18) {
+    const progress = (h - 16) / 2
+    return {
+      sunPosition,
+      turbidity: 1.5 + progress * 2,
+      rayleigh: 3.0 - progress * 0.5,
+      mieCoefficient: 0.003 + progress * 0.005,
+      mieDirectionalG: 0.75 + progress * 0.1,
+      isNight: false,
+      lightColor: progress < 0.5 ? '#fff0d6' : '#ffd699',
+      lightIntensity: 2.0 - progress * 0.3,
+      ambientIntensity: 0.45 - progress * 0.1,
+    }
+  }
+  
+  // Sunset: 6 PM to 9 PM
+  if (h >= 18 && h < 21) {
+    const progress = (h - 18) / 3 // 0 to 1
+    return {
+      sunPosition,
+      turbidity: 3.5 + progress * 4,
+      rayleigh: 2.5 - progress * 2,
+      mieCoefficient: 0.008 + progress * 0.005,
+      mieDirectionalG: 0.85 + progress * 0.1,
+      isNight: progress > 0.8,
+      lightColor: progress < 0.5 ? '#ff9966' : '#cc6633',
+      lightIntensity: 1.7 - progress * 1.2,
+      ambientIntensity: 0.35 - progress * 0.2,
+    }
+  }
+  
+  // Default fallback (shouldn't reach here)
+  return {
+    sunPosition,
+    turbidity: 2,
+    rayleigh: 2.5,
+    mieCoefficient: 0.005,
+    mieDirectionalG: 0.8,
+    isNight: false,
+    lightColor: '#ffffff',
+    lightIntensity: 1.5,
+    ambientIntensity: 0.4,
+  }
+}
 
-  // Notify parent of sun position changes (in useEffect to avoid setState during render)
-  useEffect(() => {
-    if (onSunPositionChange) {
-      onSunPositionChange(sunPosition.clone().multiplyScalar(100))
-    }
-  }, [sunPosition, onSunPositionChange])
+interface DynamicSkyProps {
+  // Override time (0-24), if not provided uses local time
+  overrideHour?: number
+  // Callback to notify parent of sky configuration changes
+  onConfigChange?: (config: TimeOfDayConfig) => void
+}
 
-  const uniforms = useMemo(
-    () => ({
-      uTime: { value: 0 },
-      uSunPosition: { value: sunPosition },
-      uTurbidity: { value: turbidity },
-      uRayleigh: { value: rayleigh },
-      uMieCoefficient: { value: mieCoefficient },
-      uMieDirectionalG: { value: mieDirectionalG },
-      // Precomputed scattering coefficients
-      uBetaR: { value: new THREE.Vector3(5.5e-6, 13.0e-6, 22.4e-6) }, // Rayleigh
-      uBetaM: { value: new THREE.Vector3(21e-6, 21e-6, 21e-6) }, // Mie
-    }),
-    [sunPosition, turbidity, rayleigh, mieCoefficient, mieDirectionalG]
-  )
-
-  const vertexShader = `
-    varying vec3 vWorldPosition;
-    varying vec3 vSunDirection;
-    varying float vSunfade;
-    varying vec3 vBetaR;
-    varying vec3 vBetaM;
-    varying float vSunE;
-    
-    uniform vec3 uSunPosition;
-    uniform float uTurbidity;
-    uniform float uRayleigh;
-    uniform float uMieCoefficient;
-    uniform vec3 uBetaR;
-    uniform vec3 uBetaM;
-    
-    // Constants for atmospheric scattering
-    const float e = 2.71828182845904523536;
-    const float pi = 3.141592653589793238;
-    const float n = 1.0003; // Refractive index of air
-    const float N = 2.545E25; // Molecular density at sea level
-    const float pn = 0.035; // Depolarization factor for air
-    const vec3 lambda = vec3(680E-9, 550E-9, 450E-9); // RGB wavelengths
-    const vec3 K = vec3(0.686, 0.678, 0.666); // Mie K factor
-    const float v = 4.0; // Mie v factor
-    
-    // Earth shadow depth
-    const float cutoffAngle = 1.6110731556870734; // = pi / 1.95
-    const float steepness = 1.5;
-    const float EE = 1000.0;
-    
-    float sunIntensity(float zenithAngleCos) {
-      zenithAngleCos = clamp(zenithAngleCos, -1.0, 1.0);
-      return EE * max(0.0, 1.0 - pow(e, -((cutoffAngle - acos(zenithAngleCos)) / steepness)));
-    }
-    
-    vec3 totalMie(vec3 lambda, float T) {
-      float c = (0.2 * T) * 10E-18;
-      return 0.434 * c * pi * pow((2.0 * pi) / lambda, vec3(v - 2.0)) * K;
-    }
-    
-    void main() {
-      vec4 worldPosition = modelMatrix * vec4(position, 1.0);
-      vWorldPosition = worldPosition.xyz;
-      
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      
-      vSunDirection = normalize(uSunPosition);
-      vSunE = sunIntensity(dot(vSunDirection, vec3(0.0, 1.0, 0.0)));
-      vSunfade = 1.0 - clamp(1.0 - exp((uSunPosition.y / 450000.0)), 0.0, 1.0);
-      
-      float rayleighCoefficient = uRayleigh - (1.0 * (1.0 - vSunfade));
-      
-      // Rayleigh scattering with wavelength dependence
-      vBetaR = uBetaR * rayleighCoefficient;
-      
-      // Mie scattering
-      vBetaM = totalMie(lambda, uTurbidity) * uMieCoefficient;
-    }
-  `
-
-  const fragmentShader = `
-    uniform float uTime;
-    uniform vec3 uSunPosition;
-    uniform float uMieDirectionalG;
-    uniform float uTurbidity;
-    
-    varying vec3 vWorldPosition;
-    varying vec3 vSunDirection;
-    varying float vSunfade;
-    varying vec3 vBetaR;
-    varying vec3 vBetaM;
-    varying float vSunE;
-    
-    const float pi = 3.141592653589793238;
-    const float THREE_OVER_SIXTEEN_PI = 0.05968310365946075;
-    const float ONE_OVER_FOUR_PI = 0.07957747154594767;
-    
-    // Rayleigh phase function
-    float rayleighPhase(float cosTheta) {
-      return THREE_OVER_SIXTEEN_PI * (1.0 + pow(cosTheta, 2.0));
-    }
-    
-    // Henyey-Greenstein phase function for Mie scattering
-    float hgPhase(float cosTheta, float g) {
-      float g2 = pow(g, 2.0);
-      float inverse = 1.0 / pow(1.0 - 2.0 * g * cosTheta + g2, 1.5);
-      return ONE_OVER_FOUR_PI * ((1.0 - g2) * inverse);
-    }
-    
-    // Hash functions for noise
-    float hash(vec2 p) {
-      return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-    }
-    
-    float noise(vec2 p) {
-      vec2 i = floor(p);
-      vec2 f = fract(p);
-      f = f * f * (3.0 - 2.0 * f);
-      
-      float a = hash(i);
-      float b = hash(i + vec2(1.0, 0.0));
-      float c = hash(i + vec2(0.0, 1.0));
-      float d = hash(i + vec2(1.0, 1.0));
-      
-      return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
-    }
-    
-    // FBM for volumetric clouds
-    float fbm(vec2 p, int octaves) {
-      float value = 0.0;
-      float amplitude = 0.5;
-      float frequency = 1.0;
-      float maxValue = 0.0;
-      
-      for (int i = 0; i < 6; i++) {
-        if (i >= octaves) break;
-        value += amplitude * noise(p * frequency);
-        maxValue += amplitude;
-        amplitude *= 0.5;
-        frequency *= 2.0;
-      }
-      
-      return value / maxValue;
-    }
-    
-    void main() {
-      vec3 direction = normalize(vWorldPosition - cameraPosition);
-      float height = direction.y;
-      
-      // Optical length (distance through atmosphere)
-      // Using approximation for computational efficiency
-      float zenithAngle = acos(max(0.0, height));
-      float inverse = 1.0 / (cos(zenithAngle) + 0.15 * pow(93.885 - ((zenithAngle * 180.0) / pi), -1.253));
-      float sR = 8.4E3 * inverse; // Rayleigh scale height
-      float sM = 1.25E3 * inverse; // Mie scale height
-      
-      // Combined extinction coefficient
-      vec3 Fex = exp(-(vBetaR * sR + vBetaM * sM));
-      
-      // In-scattering
-      float cosTheta = dot(direction, vSunDirection);
-      float rPhase = rayleighPhase(cosTheta * 0.5 + 0.5);
-      vec3 betaRTheta = vBetaR * rPhase;
-      
-      float mPhase = hgPhase(cosTheta, uMieDirectionalG);
-      vec3 betaMTheta = vBetaM * mPhase;
-      
-      // Sun disk
-      float sunAngularDiameter = 0.0093; // Approximate angular diameter
-      float sunDiskIntensity = smoothstep(cos(sunAngularDiameter), 1.0, cosTheta);
-      
-      // Final sky color from scattering
-      vec3 Lin = pow(vSunE * ((betaRTheta + betaMTheta) / (vBetaR + vBetaM)) * (1.0 - Fex), vec3(1.5));
-      Lin *= mix(vec3(1.0), pow(vSunE * ((betaRTheta + betaMTheta) / (vBetaR + vBetaM)) * Fex, vec3(0.5)), clamp(pow(1.0 - dot(vec3(0.0, 1.0, 0.0), vSunDirection), 5.0), 0.0, 1.0));
-      
-      // Composition + solar disc
-      vec3 L0 = vec3(0.1) * Fex;
-      L0 += vSunE * 19000.0 * Fex * sunDiskIntensity;
-      
-      vec3 texColor = (Lin + L0) * 0.04 + vec3(0.0, 0.0003, 0.00075);
-      
-      // Tone mapping
-      vec3 color = pow(texColor, vec3(1.0 / (1.2 + (1.2 * vSunfade))));
-      color = 1.0 - exp(-1.0 * color);
-      
-      // Add clouds above horizon
-      if (height > 0.02) {
-        vec2 cloudUv = direction.xz / (direction.y + 0.3);
-        cloudUv += vec2(uTime * 0.002, uTime * 0.0008);
-        
-        // Multiple cloud layers for depth
-        float cloudLayer1 = fbm(cloudUv * 0.35, 5);
-        float cloudLayer2 = fbm(cloudUv * 0.7 + vec2(50.0, 30.0), 4);
-        
-        float cloudDensity1 = smoothstep(0.42, 0.62, cloudLayer1);
-        float cloudDensity2 = smoothstep(0.48, 0.68, cloudLayer2) * 0.5;
-        float totalCloud = max(cloudDensity1, cloudDensity2);
-        
-        // Cloud coloring based on sun position
-        float sunHeight = vSunDirection.y;
-        vec3 cloudColorBright = vec3(1.0);
-        vec3 cloudColorDark = vec3(0.75, 0.78, 0.85);
-        
-        // Sunset/sunrise coloring
-        if (sunHeight < 0.3) {
-          float sunsetFactor = 1.0 - sunHeight / 0.3;
-          cloudColorBright = mix(cloudColorBright, vec3(1.0, 0.85, 0.7), sunsetFactor * 0.6);
-          cloudColorDark = mix(cloudColorDark, vec3(0.9, 0.65, 0.5), sunsetFactor * 0.4);
-        }
-        
-        // Cloud self-shadowing
-        float cloudShading = fbm(cloudUv * 1.2 + vec2(100.0), 3);
-        vec3 cloudColor = mix(cloudColorDark, cloudColorBright, cloudShading);
-        
-        // Sun illumination on clouds
-        float cloudSunDot = max(0.0, dot(vec3(direction.x, 0.0, direction.z), vec3(vSunDirection.x, 0.0, vSunDirection.z)));
-        cloudColor += vec3(0.12, 0.08, 0.02) * cloudSunDot * totalCloud * (1.0 - sunHeight);
-        
-        // Fade clouds near horizon
-        float horizonFade = smoothstep(0.02, 0.2, height);
-        totalCloud *= horizonFade;
-        
-        color = mix(color, cloudColor, totalCloud * 0.85);
-      }
-      
-      // Horizon haze
-      float horizonHaze = pow(1.0 - abs(height), 16.0) * 0.3;
-      vec3 hazeColor = mix(vec3(0.85, 0.9, 0.95), vec3(1.0, 0.9, 0.8), max(0.0, 1.0 - vSunDirection.y * 3.0));
-      color = mix(color, hazeColor, horizonHaze);
-      
-      // Ensure minimum brightness for visibility
-      color = max(color, vec3(0.02));
-      
-      gl_FragColor = vec4(color, 1.0);
-    }
-  `
-
-  useFrame((state) => {
-    if (materialRef.current) {
-      materialRef.current.uniforms.uTime.value = state.clock.elapsedTime
-    }
+export function DynamicSky({ overrideHour, onConfigChange }: DynamicSkyProps) {
+  const [currentHour, setCurrentHour] = useState(() => {
+    if (overrideHour !== undefined) return overrideHour
+    const now = new Date()
+    return now.getHours() + now.getMinutes() / 60
   })
-
+  
+  // Update time periodically (every minute) if using real time
+  useEffect(() => {
+    if (overrideHour !== undefined) {
+      setCurrentHour(overrideHour)
+      return
+    }
+    
+    const updateTime = () => {
+      const now = new Date()
+      setCurrentHour(now.getHours() + now.getMinutes() / 60)
+    }
+    
+    updateTime()
+    const interval = setInterval(updateTime, 60000) // Update every minute
+    
+    return () => clearInterval(interval)
+  }, [overrideHour])
+  
+  const config = useMemo(() => getTimeOfDayConfig(currentHour), [currentHour])
+  
+  // Notify parent of config changes
+  useEffect(() => {
+    if (onConfigChange) {
+      onConfigChange(config)
+    }
+  }, [config, onConfigChange])
+  
   return (
-    <mesh scale={[-1, 1, 1]}>
-      <sphereGeometry args={[900, 64, 64]} />
-      <shaderMaterial
-        ref={materialRef}
-        vertexShader={vertexShader}
-        fragmentShader={fragmentShader}
-        uniforms={uniforms}
-        side={THREE.BackSide}
-        depthWrite={false}
+    <>
+      {/* Main sky dome using drei's Sky component */}
+      <DreiSky
+        distance={450000}
+        sunPosition={config.sunPosition}
+        inclination={0}
+        azimuth={0.25}
+        turbidity={config.turbidity}
+        rayleigh={config.rayleigh}
+        mieCoefficient={config.mieCoefficient}
+        mieDirectionalG={config.mieDirectionalG}
       />
-    </mesh>
+      
+      {/* Stars visible at night */}
+      {config.isNight && (
+        <Stars
+          radius={300}
+          depth={60}
+          count={4000}
+          factor={5}
+          saturation={0.2}
+          fade
+          speed={0.5}
+        />
+      )}
+    </>
   )
 }
 
-// Export sun position calculator for use in other components
+// Export the config type and helper functions for use in other components
+export type { TimeOfDayConfig }
+export { getTimeOfDayConfig, getSunPositionFromHour }
+
+// Legacy export for backward compatibility
 export function calculateSunPosition(elevation: number, azimuth: number): THREE.Vector3 {
   const phi = Math.PI / 2 - elevation
   const theta = azimuth
