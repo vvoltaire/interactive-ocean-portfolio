@@ -171,11 +171,11 @@ function Scene({ onSelectProject, selectedProject }: OceanSceneProps) {
         />
       ))}
       
-      {/* Spatial UI - floating glassmorphism panel (bottom-right, smaller) */}
+      {/* Spatial UI - floating glassmorphism panel (lower-left, visible from start) */}
       <SpatialInteractionsPanel 
-        position={[14, 1.5, 10]} 
-        rotation={[0, -0.6, 0]}
-        scale={0.65}
+        position={[-8, 1.8, 8]} 
+        rotation={[0, 0.4, 0]}
+        scale={0.7}
       />
       
       {/* Camera controls */}

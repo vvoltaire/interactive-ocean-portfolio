@@ -13,9 +13,9 @@ interface SpatialUIPanelProps {
 }
 
 export function SpatialInteractionsPanel({ 
-  position = [12, 1.2, 8],  // Bottom-right area
-  rotation = [0, -0.5, 0],
-  scale = 0.7  // Smaller scale
+  position = [-8, 1.8, 8],  // Lower-left area, visible from initial camera
+  rotation = [0, 0.4, 0],   // Angled to face camera
+  scale = 0.7
 }: SpatialUIPanelProps) {
   const groupRef = useRef<THREE.Group>(null)
   const initialY = useRef(position[1])
