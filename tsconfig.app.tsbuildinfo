@@ -1,1 +1,0 @@
-{"root":["./src/app.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/components/canvas/oceancanvas.tsx","./src/components/canvas/oceanplane.tsx","./src/components/canvas/scene.tsx","./src/config/constants.ts","./src/config/projects.ts"],"errors":true,"version":"6.0.3"}
