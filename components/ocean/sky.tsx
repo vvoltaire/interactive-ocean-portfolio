@@ -86,10 +86,10 @@ function getTimeOfDayConfig(hour: number): TimeOfDayConfig {
     const progress = (h - 5) / 3 // 0 to 1
     return {
       sunPosition,
-      turbidity: 4 - progress * 2, // 4 to 2
-      rayleigh: 1.5 + progress * 1, // 1.5 to 2.5
-      mieCoefficient: 0.01 - progress * 0.005, // 0.01 to 0.005
-      mieDirectionalG: 0.9,
+      turbidity: 8 + progress * 2, // 8 to 10
+      rayleigh: 1 + progress * 1, // 1 to 2
+      mieCoefficient: 0.01 - progress * 0.005,
+      mieDirectionalG: 0.85,
       isNight: false,
       lightColor: progress < 0.5 ? '#ffb366' : '#ffd699',
       lightIntensity: 0.5 + progress * 1.0,
@@ -101,10 +101,10 @@ function getTimeOfDayConfig(hour: number): TimeOfDayConfig {
   if (h >= 8 && h < 16) {
     return {
       sunPosition,
-      turbidity: 1.5, // Clear sky
-      rayleigh: 3.0, // Strong blue - deep saturated sky
-      mieCoefficient: 0.003,
-      mieDirectionalG: 0.75,
+      turbidity: 10, // Higher turbidity for richer color
+      rayleigh: 2, // Rayleigh scattering for blue
+      mieCoefficient: 0.005,
+      mieDirectionalG: 0.8,
       isNight: false,
       lightColor: '#fff8f0',
       lightIntensity: 2.0,
@@ -117,10 +117,10 @@ function getTimeOfDayConfig(hour: number): TimeOfDayConfig {
     const progress = (h - 16) / 2
     return {
       sunPosition,
-      turbidity: 1.5 + progress * 2,
-      rayleigh: 3.0 - progress * 0.5,
-      mieCoefficient: 0.003 + progress * 0.005,
-      mieDirectionalG: 0.75 + progress * 0.1,
+      turbidity: 10 + progress * 2,
+      rayleigh: 2 - progress * 0.3,
+      mieCoefficient: 0.005 + progress * 0.003,
+      mieDirectionalG: 0.8 + progress * 0.05,
       isNight: false,
       lightColor: progress < 0.5 ? '#fff0d6' : '#ffd699',
       lightIntensity: 2.0 - progress * 0.3,
@@ -133,8 +133,8 @@ function getTimeOfDayConfig(hour: number): TimeOfDayConfig {
     const progress = (h - 18) / 3 // 0 to 1
     return {
       sunPosition,
-      turbidity: 3.5 + progress * 4,
-      rayleigh: 2.5 - progress * 2,
+      turbidity: 12 + progress * 4,
+      rayleigh: 1.7 - progress * 1.2,
       mieCoefficient: 0.008 + progress * 0.005,
       mieDirectionalG: 0.85 + progress * 0.1,
       isNight: progress > 0.8,
@@ -147,8 +147,8 @@ function getTimeOfDayConfig(hour: number): TimeOfDayConfig {
   // Default fallback (shouldn't reach here)
   return {
     sunPosition,
-    turbidity: 2,
-    rayleigh: 2.5,
+    turbidity: 10,
+    rayleigh: 2,
     mieCoefficient: 0.005,
     mieDirectionalG: 0.8,
     isNight: false,
