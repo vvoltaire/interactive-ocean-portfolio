@@ -206,16 +206,27 @@ export function DynamicSky({ overrideHour, onConfigChange }: DynamicSkyProps) {
     return [x / len, y / len, z / len]
   }, [config.sunPosition])
   
+  // Debug: log all sky params
+  console.log('[v0] Sky params:', {
+    hour: currentHour,
+    sunPosition: normalizedSunPos,
+    turbidity: config.turbidity,
+    rayleigh: config.rayleigh,
+    mieCoefficient: config.mieCoefficient,
+    mieDirectionalG: config.mieDirectionalG,
+    isNight: config.isNight
+  })
+  
   return (
     <>
       {/* Main sky dome using drei's Sky component */}
+      {/* Test with hardcoded values known to produce blue sky */}
       <DreiSky
-        distance={450000}
-        sunPosition={normalizedSunPos}
-        turbidity={config.turbidity}
-        rayleigh={config.rayleigh}
-        mieCoefficient={config.mieCoefficient}
-        mieDirectionalG={config.mieDirectionalG}
+        sunPosition={[0, 1, 0]}
+        turbidity={10}
+        rayleigh={3}
+        mieCoefficient={0.005}
+        mieDirectionalG={0.7}
       />
       
       {/* Stars visible at night */}
